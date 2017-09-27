@@ -35,23 +35,25 @@ The backend is built with ruby on rails.
 
 Follow the steps below to recreate this project on your own:
 
-###1. Create a project
+### 1. Create a project
 
     $ rails new jasonserver
 
-###2. Generate scaffold
+### 2. Generate scaffold
 It's going to be just a simple app with a post, and each post belongs_to a user.
 
     $ rails generate scaffold Post content:text user_id:integer
 
-###3. Implement Devise and token authentication
+### 3. Implement Devise and token authentication
 We will use [devise](https://github.com/plataformatec/devise) for authentication.
 
 Also, we will use [simple_token_authentication gem](https://github.com/gonzalo-bulnes/simple_token_authentication) for implementing token authentication on top of devise.
 
-    # in Gemfile
-    gem 'devise'
-    gem 'simple_token_authentication', '~> 1.0'
+```ruby
+# in Gemfile
+gem 'devise'
+gem 'simple_token_authentication', '~> 1.0'
+```
 
 Then we run the usual devise install commands, creating a `User` model and letting devise take over.
 
@@ -65,12 +67,14 @@ Then we add an `authentication_token` field to `User`.
 
 To integrate the [simple_token_authentication gem](https://github.com/gonzalo-bulnes/simple_token_authentication), we add the line **acts_as_token_authenticatable**, like below:
 
-    # in User.rb
-    class User < ActiveRecord::Base
-      acts_as_token_authenticatable
-      devise :database_authenticatable, :registerable,
-            :recoverable, :rememberable, :trackable, :validatable
-    end
+```ruby
+# in User.rb
+class User < ActiveRecord::Base
+  acts_as_token_authenticatable
+  devise :database_authenticatable, :registerable,
+        :recoverable, :rememberable, :trackable, :validatable
+end
+```
 
 Notice we've removed `:confirmable` devise attribute from the second line, which devise generated for us, since we won't use email confirmation for sign up.
 
@@ -78,115 +82,124 @@ Lastly, migrate.
 
     $ rake db:migrate
 
-###4. Add authentication to controllers
+### 4. Add authentication to controllers
 
 Add the `:authenticate_user!` line to `posts_controller.rb` so that it authenticates before calling any actions.
-    
-    # in posts_controller.rb
-    class PostsController < ApplicationController
-    
-      before_action :authenticate_user!
-      ...
-    
-    end
+
+```ruby
+# in posts_controller.rb
+class PostsController < ApplicationController
+
+  before_action :authenticate_user!
+  ...
+
+end
+```
 
 Also make `application_controller.rb` token authenticatable:
 
-    # in application_controller.rb
-    class ApplicationController < ActionController::Base
-      acts_as_token_authentication_handler_for User
-      respond_to :html, :json
-      protect_from_forgery with: :null_session
-    end
+```ruby
+# in application_controller.rb
+class ApplicationController < ActionController::Base
+  acts_as_token_authentication_handler_for User
+  respond_to :html, :json
+  protect_from_forgery with: :null_session
+end
+```
 
-
-###5. Set up associations
+### 5. Set up associations
 
 Add `has_many :posts` to `User` model, and `belongs_to :user` to `Post` model.
 
-    # in User.rb
-    class User < ActiveRecord::Base
-      has_many :posts
-      acts_as_token_authenticatable
-      devise :database_authenticatable, :registerable,
-            :recoverable, :rememberable, :trackable, :validatable
-    end
+```ruby
+# in User.rb
+class User < ActiveRecord::Base
+  has_many :posts
+  acts_as_token_authenticatable
+  devise :database_authenticatable, :registerable,
+        :recoverable, :rememberable, :trackable, :validatable
+end
 
-    # in Post.rb
-    class Post < ActiveRecord::Base
-      belongs_to :user
-    end
+# in Post.rb
+class Post < ActiveRecord::Base
+  belongs_to :user
+end
+```
 
 Also don't forget to update `new` and `create` actions so they tie each post with user accounts.
 
-    # in posts_controller.rb
-    class PostsController < ApplicationController
-    
-      ...
-    
-      def new
-        @post = current_user.posts.build
-      end
-      
-      def create
-        @post = current_user.posts.build(post_params)
-      end
-    
-      ...
-    
-    end
+```ruby
+# in posts_controller.rb
+class PostsController < ApplicationController
 
+  ...
 
-###6. Update route
+  def new
+    @post = current_user.posts.build
+  end
+
+  def create
+    @post = current_user.posts.build(post_params)
+  end
+
+  ...
+
+end
+```
+
+### 6. Update route
 
 We want the root route to map to `posts#index`. Update `config/routes.rb`
 
-    # in config/routes.rb
-    
-      root "posts#index"
+```ruby
+# in config/routes.rb
 
+root "posts#index"
+```
 
-###7. Override `authenticate_user!` to handle html and json separately
+### 7. Override `authenticate_user!` to handle html and json separately
 
+```ruby
+class ApplicationController < ActionController::Base
+  acts_as_token_authentication_handler_for User
+  respond_to :html, :json
+  protect_from_forgery with: :null_session
 
-    class ApplicationController < ActionController::Base
-      acts_as_token_authentication_handler_for User
-      respond_to :html, :json
-      protect_from_forgery with: :null_session
-    
-      protected
-      def authenticate_user!
-        if self.request.format.html?
+  protected
+  def authenticate_user!
+    if self.request.format.html?
+      super
+    elsif self.request.format.json?
+      if self.request.parameters["controller"].start_with?("devise")
+        # use the default if session related
+        super
+      else
+        # others
+        if user_signed_in?
+          # use the default if already signed in
           super
-        elsif self.request.format.json?
-          if self.request.parameters["controller"].start_with?("devise")
-            # use the default if session related
-            super
-          else
-            # others
-            if user_signed_in?
-              # use the default if already signed in
-              super
-            else
-              # serve the static login page if not signed in
-              @data = File.read("#{Rails.root}/public/login.json")
-              @data = @data.gsub(/ROOT/, root_url)
-              render :json => @data
-            end
-          end
+        else
+          # serve the static login page if not signed in
+          @data = File.read("#{Rails.root}/public/login.json")
+          @data = @data.gsub(/ROOT/, root_url)
+          render :json => @data
         end
       end
     end
+  end
+end
+```
 
-###8. If deploying to Heroku (optional)
+### 8. If deploying to Heroku (optional)
 
 Don't forget to add these to your Gemfile if you're deploying to heroku:
 
-    # in Gemfile
-    gem 'sqlite3', group: :development
-    gem 'pg', group: :production
-    gem 'rails_12factor', group: :production
-
+```ruby
+# in Gemfile
+gem 'sqlite3', group: :development
+gem 'pg', group: :production
+gem 'rails_12factor', group: :production
+```
 
 Now the backend API is ready!
 
@@ -200,61 +213,67 @@ If you look at the `authenticate_user!` logic above, it renders a json content l
 
 That's the JSON markup for a login page. The sign in button part looks like this:
 
-    ...
-    "text": "Sign in >",
-    "action": {
-      "type": "$network.request",
+```json
+...
+"text": "Sign in >",
+"action": {
+  "type": "$network.request",
+  "options": {
+    "url": "ROOT/users/sign_in.json",
+    "method": "post",
+    "data": {
+      "user[email]": "{{$get.email}}",
+      "user[password]": "{{$get.password}}"
+    }
+  },
+  "success": {
+    "type": "$session.set",
+    "options": {
+      "domain": "ROOT",
+      "header": {
+        "X-User-Email": "{{$jason.email}}",
+        "X-User-Token": "{{$jason.authentication_token}}"
+      }
+    },
+    "success": {
+      "type": "$href",
       "options": {
-        "url": "ROOT/users/sign_in.json",
-        "method": "post",
-        "data": {
-          "user[email]": "{{$get.email}}",
-          "user[password]": "{{$get.password}}"
-        }
-      },
-      "success": {
-        "type": "$session.set",
-        "options": {
-          "domain": "ROOT",
-          "header": {
-            "X-User-Email": "{{$jason.email}}",
-            "X-User-Token": "{{$jason.authentication_token}}"
-          }
-        },
-        "success": {
-          "type": "$href",
-          "options": {
-            "url": "ROOT/posts.json",
-            "transition": "replace"
-          }
-        }
-      },
-      "error": {
-        "type": "$util.banner",
-        "options": {
-          "title": "Error",
-          "description": "Something went wrong. Please check if you entered your email and password correctly"
-        }
+        "url": "ROOT/posts.json",
+        "transition": "replace"
       }
     }
-    ...
+  },
+  "error": {
+    "type": "$util.banner",
+    "options": {
+      "title": "Error",
+      "description": "Something went wrong. Please check if you entered your email and password correctly"
+    }
+  }
+}
+...
+```
 
 If you scroll up to the `authenticate_user!` code, you'll see that it replaces `ROOT` with `root_url`, before returning the response:
 
-    @data = @data.gsub(/ROOT/, root_url)
+```ruby
+@data = @data.gsub(/ROOT/, root_url)
+```
 
 So here's what will happen when a user taps **Sign in**.
 
-###1. It first makes a `$network.request` to the sign in url, to which the server returns a response that looks something like this:
+#### 1. It first makes a `$network.request` to the sign in url, to which the server returns a response that looks something like this:
 
-    {
-      "id":2,
-      "email":"ethan@ethan.fm",
-      "created_at":"2016-10-14T22:55:00.664Z",
-      "updated_at":"2016-10-15T05:22:41.730Z",
-      "authentication_token":"fnekz4hf7ghw95m6ks0rf01j"
-    }
+```json
+{
+  "id":2,
+  "email":"ethan@ethan.fm",
+  "created_at":"2016-10-14T22:55:00.664Z",
+  "updated_at":"2016-10-15T05:22:41.730Z",
+  "authentication_token":"fnekz4hf7ghw95m6ks0rf01j"
+}
+```
 
-###2. Then it goes on to the next action which is `$session.set`. This stores the session using the response from the preceding $network.request action. 
+#### 2. Then it goes on to the next action which is `$session.set`. This stores the session using the response from the preceding $network.request action.
 
-###3. Then it reloads ROOT/posts.json. This time the session is set and is automatically attached to the request, therefore successfully loading the posts JSON.
+#### 3. Then it reloads ROOT/posts.json. This time the session is set and is automatically attached to the request, therefore successfully loading the posts JSON.
